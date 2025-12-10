@@ -9,7 +9,6 @@ import {
     COLOR_CHIP_BORDER,
     COLOR_TRACE_HIGHLIGHT,
     COLOR_SIGNAL,
-    HOVER_THRESHOLD,
 } from './constants';
 import { Point } from '../../types';
 
@@ -105,83 +104,62 @@ export const renderDynamicFrame = (
     width: number,
     height: number,
     state: CircuitState,
-    mousePos: Point
+    activeTraces: { index: number; opacity: number }[],
+    activeChips: { index: number; opacity: number }[]
 ) => {
     const { traces, chips, signals } = state;
-    const mx = mousePos.x;
-    const my = mousePos.y;
 
     ctx.clearRect(0, 0, width, height);
 
-    // Helper: Distance squared from point p to segment vw
-    const distToSegmentSquared = (p: { x: number, y: number }, v: Point, w: Point) => {
-        const l2 = (v.x - w.x) ** 2 + (v.y - w.y) ** 2;
-        if (l2 === 0) return (p.x - v.x) ** 2 + (p.y - v.y) ** 2;
-        let t = ((p.x - v.x) * (w.x - v.x) + (p.y - v.y) * (w.y - v.y)) / l2;
-        t = Math.max(0, Math.min(1, t));
-        return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (
-            p.y - (v.y + t * (w.y - v.y))) ** 2;
-    };
-
-    // 2. Interactive Traces
+    // 2. Active Traces (Randomly highlighted)
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
-    // Strict proximity: HOVER_THRESHOLD radius to the LINE itself
-    const hoverThresholdSq = HOVER_THRESHOLD * HOVER_THRESHOLD;
+    activeTraces.forEach((item) => {
+        const trace = traces[item.index];
+        if (!trace || trace.points.length < 2) return;
 
-    traces.forEach((trace) => {
-        if (trace.points.length < 2) return;
-
-        let minDistSq = Infinity;
-
-        for (let i = 0; i < trace.points.length - 1; i++) {
-            const dStr = distToSegmentSquared(
-                { x: mx, y: my },
-                trace.points[i],
-                trace.points[i + 1]
-            );
-            if (dStr < minDistSq) minDistSq = dStr;
+        ctx.beginPath();
+        ctx.moveTo(trace.points[0].x, trace.points[0].y);
+        for (let i = 1; i < trace.points.length; i++) {
+            ctx.lineTo(trace.points[i].x, trace.points[i].y);
         }
 
-        const isHovered = minDistSq < hoverThresholdSq;
+        // Dynamic opacity
+        const color = COLOR_TRACE_HIGHLIGHT.replace('#', '');
+        const r = parseInt(color.substring(0, 2), 16);
+        const g = parseInt(color.substring(2, 4), 16);
+        const b = parseInt(color.substring(4, 6), 16);
 
-        if (isHovered) {
-            ctx.beginPath();
-            ctx.moveTo(trace.points[0].x, trace.points[0].y);
-            for (let i = 1; i < trace.points.length; i++) {
-                ctx.lineTo(trace.points[i].x, trace.points[i].y);
-            }
-            ctx.strokeStyle = COLOR_TRACE_HIGHLIGHT;
-            ctx.lineWidth = 2;
-            ctx.stroke();
+        ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${item.opacity})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
 
-            ctx.fillStyle = COLOR_SIGNAL;
-            const radius = 3;
-            ctx.beginPath();
-            ctx.arc(trace.points[0].x, trace.points[0].y, radius, 0, Math.PI * 2);
-            ctx.fill();
-            const last = trace.points[trace.points.length - 1];
-            ctx.beginPath();
-            ctx.arc(last.x, last.y, radius, 0, Math.PI * 2);
-            ctx.fill();
-        }
+        // Nodes
+        const colorSignal = COLOR_SIGNAL.replace('#', '');
+        const sr = parseInt(colorSignal.substring(0, 2), 16);
+        const sg = parseInt(colorSignal.substring(2, 4), 16);
+        const sb = parseInt(colorSignal.substring(4, 6), 16);
+        ctx.fillStyle = `rgba(${sr}, ${sg}, ${sb}, ${item.opacity})`;
+
+        const radius = 3;
+        ctx.beginPath();
+        ctx.arc(trace.points[0].x, trace.points[0].y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        const last = trace.points[trace.points.length - 1];
+        ctx.beginPath();
+        ctx.arc(last.x, last.y, radius, 0, Math.PI * 2);
+        ctx.fill();
     });
 
-    // 3. Chip Interaction
-    chips.forEach((chip) => {
-        const centerX = chip.x + chip.width / 2;
-        const centerY = chip.y + chip.height / 2;
-        const distSq = (centerX - mx) ** 2 + (centerY - my) ** 2;
+    // 3. Active Chips (Randomly highlighted)
+    activeChips.forEach((item) => {
+        const chip = chips[item.index];
+        if (!chip) return;
 
-        if (distSq < 300 * 300) {
-            const intensity = Math.max(0, 1 - Math.sqrt(distSq) / 300);
-            if (intensity > 0.1) {
-                // Make the glow slightly larger than chip so it peeks out
-                ctx.fillStyle = `rgba(0, 242, 255, ${intensity * 0.3})`;
-                ctx.fillRect(chip.x - 5, chip.y - 5, chip.width + 10, chip.height + 10);
-            }
-        }
+        // Glow
+        ctx.fillStyle = `rgba(0, 242, 255, ${item.opacity * 0.3})`;
+        ctx.fillRect(chip.x - 5, chip.y - 5, chip.width + 10, chip.height + 10);
     });
 
     // 4. Signals

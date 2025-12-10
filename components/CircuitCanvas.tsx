@@ -1,18 +1,14 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { Point } from '../types';
 import { generateCircuit, CircuitState } from './circuit/generator';
 import { renderStaticLayers, renderDynamicFrame } from './circuit/renderer';
-import { ACTIVATION_INTERVAL_MS, ACTIVATION_DURATION_MS, MAX_ACTIVE_TRACES, MAX_ACTIVE_CHIPS, ACTIVATION_RADIUS } from './circuit/constants';
-
-interface Activation {
-  index: number;
-  startTime: number;
-}
 
 const CircuitCanvas: React.FC = () => {
   const staticCanvasRef = useRef<HTMLCanvasElement>(null);
   const dynamicCanvasRef = useRef<HTMLCanvasElement>(null);
   const chipCanvasRef = useRef<HTMLCanvasElement>(null);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
+  const mouseRef = useRef<Point>({ x: -1000, y: -1000 });
 
   // Game state refs
   const stateRef = useRef<CircuitState>({
@@ -21,11 +17,6 @@ const CircuitCanvas: React.FC = () => {
     signals: [],
     gridOccupied: [],
   });
-
-  // Activation State
-  const activeTracesRef = useRef<Activation[]>([]);
-  const activeChipsRef = useRef<Activation[]>([]);
-  const lastActivationTimeRef = useRef<number>(0);
 
   // Handle Resize => Init & Render Static
   useEffect(() => {
@@ -54,9 +45,6 @@ const CircuitCanvas: React.FC = () => {
       if (bgCtx && chipCtx) {
         const newState = generateCircuit(innerWidth, innerHeight);
         stateRef.current = newState;
-        // Reset activations on new circuit
-        activeTracesRef.current = [];
-        activeChipsRef.current = [];
         renderStaticLayers(bgCtx, chipCtx, innerWidth, innerHeight, newState);
       }
 
@@ -67,11 +55,18 @@ const CircuitCanvas: React.FC = () => {
     handleResize();
 
     return () => window.removeEventListener('resize', handleResize);
+  }, []); // Empty dependency array as imported functions are stable
+
+  // Handle Mouse
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      mouseRef.current = { x: e.clientX, y: e.clientY };
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    return () => window.removeEventListener('mousemove', handleMouseMove);
   }, []);
 
-  // Mouse Listener Removed
-
-  // Animation Loop (Dynamic Layer & Logic)
+  // Animation Loop (Dynamic Layer)
   useEffect(() => {
     // Wait for dimensions to be set
     if (!dynamicCanvasRef.current || dimensions.width === 0) return;
@@ -82,103 +77,35 @@ const CircuitCanvas: React.FC = () => {
 
     let animationFrameId: number;
 
-    const render = (time: number) => {
-      const { traces, chips } = stateRef.current;
-
-      // 1. Logic: Manage Activations
-      // Clean up old
-      activeTracesRef.current = activeTracesRef.current.filter(a => time - a.startTime < ACTIVATION_DURATION_MS);
-      activeChipsRef.current = activeChipsRef.current.filter(a => time - a.startTime < ACTIVATION_DURATION_MS);
-
-      // Add new
-      if (time - lastActivationTimeRef.current > ACTIVATION_INTERVAL_MS) {
-        lastActivationTimeRef.current = time;
-
-        // Try add trace cluster
-        if (activeTracesRef.current.length < MAX_ACTIVE_TRACES && traces.length > 0) {
-          const centerIdx = Math.floor(Math.random() * traces.length);
-          const centerTrace = traces[centerIdx];
-          const p = centerTrace.points[0];
-
-          // Find neighbors (Cluster activation)
-          const rSq = ACTIVATION_RADIUS * ACTIVATION_RADIUS;
-
-          for (let i = 0; i < traces.length; i++) {
-            if (activeTracesRef.current.length >= MAX_ACTIVE_TRACES) break;
-
-            const t = traces[i];
-            if (t.points.length < 1) continue;
-            const tp = t.points[0];
-            const dSq = (p.x - tp.x) ** 2 + (p.y - tp.y) ** 2;
-
-            if (dSq < rSq) {
-              if (!activeTracesRef.current.some(at => at.index === i)) {
-                activeTracesRef.current.push({ index: i, startTime: time });
-              }
-            }
-          }
-        }
-
-        // Try add chip cluster
-        if (activeChipsRef.current.length < MAX_ACTIVE_CHIPS && chips.length > 0) {
-          const centerIdx = Math.floor(Math.random() * chips.length);
-          const centerChip = chips[centerIdx];
-          const cx = centerChip.x + centerChip.width / 2;
-          const cy = centerChip.y + centerChip.height / 2;
-          const rSq = ACTIVATION_RADIUS * ACTIVATION_RADIUS;
-
-          for (let i = 0; i < chips.length; i++) {
-            if (activeChipsRef.current.length >= MAX_ACTIVE_CHIPS) break;
-            const c = chips[i];
-            const ccx = c.x + c.width / 2;
-            const ccy = c.y + c.height / 2;
-            const dSq = (cx - ccx) ** 2 + (cy - ccy) ** 2;
-
-            if (dSq < rSq) {
-              if (!activeChipsRef.current.some(ac => ac.index === i)) {
-                activeChipsRef.current.push({ index: i, startTime: time });
-              }
-            }
-          }
-        }
-      }
-
-      // Prepare render data
-      const activeTraces = activeTracesRef.current.map(a => ({
-        index: a.index,
-        opacity: 1 - (time - a.startTime) / ACTIVATION_DURATION_MS
-      }));
-      const activeChips = activeChipsRef.current.map(a => ({
-        index: a.index,
-        opacity: 1 - (time - a.startTime) / ACTIVATION_DURATION_MS
-      }));
-
+    const render = () => {
       renderDynamicFrame(
         ctx,
         dimensions.width,
         dimensions.height,
         stateRef.current,
-        activeTraces,
-        activeChips
+        mouseRef.current
       );
       animationFrameId = requestAnimationFrame(render);
     };
 
-    render(performance.now());
+    render();
 
     return () => cancelAnimationFrame(animationFrameId);
   }, [dimensions]);
 
   return (
     <>
+      {/* Layer 1: Traces & Grid (Bottom) */}
       <canvas
         ref={staticCanvasRef}
         className="block absolute top-0 left-0 w-full h-full z-0 pointer-events-none"
       />
+      {/* Layer 2: Signals & Glows (Middle) */}
       <canvas
         ref={dynamicCanvasRef}
         className="block absolute top-0 left-0 w-full h-full z-0 pointer-events-none"
       />
+      {/* Layer 3: Chips (Top) */}
       <canvas
         ref={chipCanvasRef}
         className="block absolute top-0 left-0 w-full h-full z-0 pointer-events-none"
